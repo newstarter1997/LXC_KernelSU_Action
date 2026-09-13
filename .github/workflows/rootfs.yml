@@ -1,0 +1,57 @@
+name: Build PopOS Arm64 RootFS
+run-name: PopOS 24.04 arm64 rootfs build
+on:
+  workflow_dispatch: # 手动触发，仓库页面点Run workflow
+  # push: # 可选：提交代码自动触发，不需要就注释
+
+jobs:
+  build-rootfs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install build deps
+        run: |
+          sudo apt update
+          sudo apt install -y wget squashfs-tools qemu-user-static tar xz-utils
+
+      - name: Create work dir
+        run: |
+          mkdir -p ./work/{iso_mnt,rootfs}
+          cd ./work
+
+      - name: Download PopOS arm64 ISO
+        run: |
+          wget -c https://iso.pop-os.org/24.04/arm64/generic/3/pop-os_24.04_arm64_generic_3.iso -O ./work/popos.iso
+
+      - name: Mount ISO and extract squashfs
+        run: |
+          # mount iso
+          sudo mount -o loop ./work/popos.iso ./work/iso_mnt
+          # unsquashfs，完整提取rootfs，保留权限xattr
+          sudo unsquashfs -f -d ./work/rootfs ./work/iso_mnt/casper/filesystem.squashfs
+          # umount iso
+          sudo umount ./work/iso_mnt
+
+      - name: Prepare chroot env & copy qemu static
+        run: |
+          ROOTFS=./work/rootfs
+          sudo cp $(which qemu-aarch64-static) $ROOTFS/usr/bin/
+          sudo cp /etc/resolv.conf $ROOTFS/etc/
+          sudo cp /etc/hosts $ROOTFS/etc/
+          # clean live cd residual (可选，清理livecd残留)
+          sudo rm -f $ROOTFS/etc/machine-id
+          sudo rm -rf $ROOTFS/var/lib/dbus/machine-id || true
+
+      - name: Package rootfs to tar.xz
+        run: |
+          cd ./work/rootfs
+          # --xattrs 保留文件扩展属性，保证linux系统文件权限正常
+          sudo tar --xattrs --acls -cpf ../popos2404-arm64-rootfs.tar .
+          sudo xz -z -9 ../popos2404-arm64-rootfs.tar
+
+      - name: Upload rootfs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: popos-24.04-arm64-rootfs
+          path: ./work/popos2404-arm64-rootfs.tar.xz
+          retention-days: 7
+
